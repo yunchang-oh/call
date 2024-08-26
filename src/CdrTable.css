@@ -1,0 +1,65 @@
+.cdr-table {
+  width: 100%;
+  margin: 0 auto;
+  display: flex;
+  flex-direction: row;
+}
+
+.cdr-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 15px;
+  border-bottom: 1px solid #eee;
+}
+
+.cdr-status {
+  display: flex;
+  align-items: center;
+  font-size: 16px;
+}
+
+.cdr-status.발신부재 {
+  color: #f56565;
+}
+
+.cdr-status.수신부재 {
+  color: #f56565;
+}
+
+.cdr-status.통화완료 {
+  color: #38b2ac;
+}
+
+.cdr-status.통화중 {
+  color: #805ad5;
+}
+
+.icon {
+  margin-right: 8px;
+  font-size: 24px;
+}
+
+.cdr-details {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  width: 100%;
+  padding-left: 20px;
+}
+
+.cdr-datetime,
+.cdr-duration,
+.cdr-phone,
+.cdr-name {
+  margin-right: 15px;
+}
+
+.cdr-icons {
+  display: flex;
+  gap: 10px;
+}
+
+.cdr-name {
+  font-weight: bold;
+}
