@@ -1,11 +1,11 @@
-import React, { useState, useEffect } from "react";
-import axios from "axios";
-import io from "socket.io-client";
+import React, { useState, useEffect } from 'react';
+import axios from 'axios';
+import io from 'socket.io-client';
 
 function CallForm() {
-  const [externalNumber, setExternalNumber] = useState("");
-  const [callStatus, setCallStatus] = useState("대기 중");
-  const [newcalldata, setNewcalldata] = useState("");
+  const [externalNumber, setExternalNumber] = useState('');
+  const [callStatus, setCallStatus] = useState('대기 중');
+  const [newcalldata, setNewcalldata] = useState('');
   const [callStatus2, setCallStatus2] = useState({});
   const [cdrData, setCdrData] = useState([]);
   const [currentRecording, setCurrentRecording] = useState(null);
@@ -15,96 +15,144 @@ function CallForm() {
   useEffect(() => {
     const fetchCdrData = async () => {
       try {
-        const response = await axios.get("http://localhost:3001/cdr");
+        const response = await axios.get('http://172.30.1.78:3001/cdr');
+        console.log(response.data, 'response.data');
+
+        // QueueData와 나머지 데이터를 별도로 필터링
+        const queueData = response.data.filter(
+          (cdr) => cdr.lastapp === 'Queue'
+        );
+        const otherData = response.data.filter(
+          (cdr) => cdr.lastapp !== 'Queue'
+        );
 
         // 중복 제거 로직
-        const uniqueData = Array.from(
-          new Set(response.data.map((cdr) => JSON.stringify(cdr)))
+        const uniqueQueueData = Array.from(
+          new Set(queueData.map((cdr) => JSON.stringify(cdr)))
         ).map((item) => JSON.parse(item));
 
-        // 한글로 상태 변환 및 발신자 수신자 처리
-        const transformedData = uniqueData.map((cdr) => {
-          const 발신자 = cdr.src;
-          const 수신자 = cdr.dst;
+        const uniqueOtherData = Array.from(
+          new Set(otherData.map((cdr) => JSON.stringify(cdr)))
+        ).map((item) => JSON.parse(item));
 
-          // 통화 상태 한글 변환 및 세부 구분
-          let 상태 = "";
-          if (cdr.disposition === "ANSWERED") {
-            상태 = "통화완료";
-          } else if (cdr.disposition === "BUSY") {
-            상태 = "이미 통화중인 상태입니다.";
-          } else if (cdr.disposition === "FAILED") {
-            상태 = "실패";
+        const QueueData = uniqueQueueData.reduce((acc, cdr) => {
+          if (!acc[cdr.uniqueid]) {
+            acc[cdr.uniqueid] = [];
           }
+          acc[cdr.uniqueid].push(cdr);
+          return acc;
+        }, {});
 
-          // 발신자와 수신자에 따라 부재중 상태를 구분
-          if (cdr.disposition === "NO ANSWER") {
-            if (cdr.dst.length === 4 || cdr.dst.includes("0708019")) {
-              상태 = "상담사가 전화를 받지 못했습니다 (수신부재)";
-            } else if (수신자.includes("010")) {
-              상태 = "고객님이전화를받지못했습니다 (발신부재)";
+        const processedQueueData = Object.values(QueueData)
+          .filter((cdrs) => Array.isArray(cdrs))
+          .map((cdrs) => {
+            let 발신자 = '';
+            let 수신자 = '';
+            const answeredCall = cdrs.find(
+              (cdr) => cdr.disposition === 'ANSWERED'
+            );
+            if (answeredCall !== undefined) {
+              let match = answeredCall.dstchannel.match(/\/(\d+)-/);
+              if (match) {
+                수신자 = match[1];
+              }
             }
-          }
+            const result = answeredCall || cdrs[0];
+            if (수신자 === '') {
+              수신자 = result.dst;
+            }
+            발신자 = result.src;
+            let 상태 = callStatusFunction(result).상태;
+            const formattedDuration =
+              callStatusFunction(result).formattedDuration;
 
-          // 통화 시간을 분과 초로 변환
-          const minutes = Math.floor(cdr.duration / 60);
-          const seconds = cdr.duration % 60;
-          const formattedDuration =
-            minutes > 0 ? `${minutes}분 ${seconds}초` : `${seconds}초`;
+            return { ...result, 발신자, 수신자, 상태, formattedDuration };
+          });
 
-          return {
-            ...cdr,
-            발신자,
-            수신자,
-            상태,
-            formattedDuration, // 변환된 통화 시간 추가
-          };
+        const transformedData = uniqueOtherData.map((cdr) => {
+          let 발신자 = cdr.src;
+          let 수신자 = cdr.dst;
+          let 상태 = callStatusFunction(cdr).상태;
+          const formattedDuration = callStatusFunction(cdr).formattedDuration;
+
+          return { ...cdr, 발신자, 수신자, 상태, formattedDuration };
         });
 
-        setCdrData(transformedData);
+        let fullData = [...transformedData, ...processedQueueData];
+        fullData.sort((a, b) => new Date(b.calldate) - new Date(a.calldate));
+        console.log(fullData, 'fullData');
+
+        setCdrData(fullData);
       } catch (error) {
-        console.error("Failed to fetch CDR data", error);
+        console.error('Failed to fetch CDR data', error);
       }
     };
 
     fetchCdrData();
   }, [newcalldata]);
-  console.log(newcalldata);
-  useEffect(() => {
-    const socket = io("http://localhost:3001");
 
-    socket.on("connection", () => {
-      console.log("Connected to socket sㅁㄴㅇㅁㄴㅇerver");
+  let callStatusFunction = (data) => {
+    let 상태 = '';
+    if (data.disposition === 'ANSWERED') {
+      상태 = '통화완료';
+    } else if (data.disposition === 'BUSY') {
+      상태 = '이미 통화중인 상태입니다.';
+    } else if (data.disposition === 'FAILED') {
+      상태 = '실패';
+    }
+
+    // 발신자와 수신자에 따라 부재중 상태를 구분
+    if (data.disposition === 'NO ANSWER') {
+      if (data.dst.length === 4 || data.dst.includes('0708019')) {
+        상태 = '상담사가 전화를 받지 못했습니다 (수신부재)';
+      } else if (data.dst.includes('010')) {
+        상태 = '고객님이전화를받지못했습니다 (발신부재)';
+      }
+    }
+    // 통화 시간을 분과 초로 변환
+    const minutes = Math.floor(data.duration / 60);
+    const seconds = data.duration % 60;
+    const formattedDuration =
+      minutes > 0 ? `${minutes}분 ${seconds}초` : `${seconds}초`;
+
+    return { 상태, formattedDuration };
+  };
+
+  useEffect(() => {
+    const socket = io('http://localhost:3001');
+
+    socket.on('connection', () => {
+      console.log('Connected to socket sㅁㄴㅇㅁㄴㅇerver');
     });
 
-    socket.on("callStatus", (data) => {
+    socket.on('callStatus', (data) => {
       setNewcalldata(data);
-      console.log(data);
+
       //   if (data.callfail === "통화가 종료되었습니다.") {
       //     setNewcalldata("");
       //   }
 
       switch (data.통화상태) {
-        case "Ringing":
-          setCallStatus("발신 중...");
+        case 'Ringing':
+          setCallStatus('발신 중...');
           break;
-        case "Up":
-          setCallStatus("통화 중");
+        case 'Up':
+          setCallStatus('통화 중');
           break;
-        case "Busy":
-          setCallStatus("수신자가 통화 중입니다.");
+        case 'Busy':
+          setCallStatus('수신자가 통화 중입니다.');
           break;
-        case "No Answer":
-          setCallStatus("부재중");
+        case 'No Answer':
+          setCallStatus('부재중');
           break;
         default:
-          setCallStatus("대기 중");
+          setCallStatus('대기 중');
           break;
       }
     });
 
-    socket.on("disconnect", () => {
-      console.log("Disconnected from socket server");
+    socket.on('disconnect', () => {
+      console.log('Disconnected from socket server');
     });
 
     return () => {
@@ -118,37 +166,37 @@ function CallForm() {
   };
 
   const handleClear = () => {
-    setExternalNumber("");
+    setExternalNumber('');
   };
 
   const handleSubmit = async (event) => {
     event.preventDefault();
 
     try {
-      await axios.post("http://localhost:3001/call", {
+      await axios.post('http://localhost:3001/call', {
         externalNumber: externalNumber,
       });
 
-      alert("성공");
-      setExternalNumber(""); // 호출 후 번호 초기화
+      alert('성공');
+      setExternalNumber(''); // 호출 후 번호 초기화
     } catch (error) {
-      alert("실패");
+      alert('실패');
     }
   };
   function isMatchingCallData1(newcalldata) {
     return (
-      newcalldata.발신자 === "07080196410" ||
-      newcalldata.수신자 === "07080196410" ||
-      newcalldata.발신자 === "2848" ||
-      newcalldata.수신자 === "2848"
+      newcalldata.발신자 === '07080196410' ||
+      newcalldata.수신자 === '07080196410' ||
+      newcalldata.발신자 === '2848' ||
+      newcalldata.수신자 === '2848'
     );
   }
   function isMatchingCallData2(newcalldata) {
     return (
-      newcalldata.발신자 === "07080196412" ||
-      newcalldata.수신자 === "07080196412" ||
-      newcalldata.발신자 === "3333" ||
-      newcalldata.수신자 === "3333"
+      newcalldata.발신자 === '07080196412' ||
+      newcalldata.수신자 === '07080196412' ||
+      newcalldata.발신자 === '3333' ||
+      newcalldata.수신자 === '3333'
     );
   }
   const handlePlayRecording = (recordingFile) => {
@@ -161,70 +209,70 @@ function CallForm() {
   console.log(cdrData);
   return (
     <div>
-      <div className="dialer">
-        <div className="display">
+      <div className='dialer'>
+        <div className='display'>
           <input
-            type="text"
+            type='text'
             value={externalNumber}
             readOnly
-            placeholder="전화번호"
+            placeholder='전화번호'
           />
         </div>
-        <div className="buttons">
-          <button onClick={() => handleNumberClick("1")}>1</button>
-          <button onClick={() => handleNumberClick("2")}>2</button>
-          <button onClick={() => handleNumberClick("3")}>3</button>
-          <button onClick={() => handleNumberClick("4")}>4</button>
-          <button onClick={() => handleNumberClick("5")}>5</button>
-          <button onClick={() => handleNumberClick("6")}>6</button>
-          <button onClick={() => handleNumberClick("7")}>7</button>
-          <button onClick={() => handleNumberClick("8")}>8</button>
-          <button onClick={() => handleNumberClick("9")}>9</button>
-          <button onClick={() => handleNumberClick("*")}>*</button>
-          <button onClick={() => handleNumberClick("0")}>0</button>
-          <button onClick={() => handleNumberClick("#")}>#</button>
+        <div className='buttons'>
+          <button onClick={() => handleNumberClick('1')}>1</button>
+          <button onClick={() => handleNumberClick('2')}>2</button>
+          <button onClick={() => handleNumberClick('3')}>3</button>
+          <button onClick={() => handleNumberClick('4')}>4</button>
+          <button onClick={() => handleNumberClick('5')}>5</button>
+          <button onClick={() => handleNumberClick('6')}>6</button>
+          <button onClick={() => handleNumberClick('7')}>7</button>
+          <button onClick={() => handleNumberClick('8')}>8</button>
+          <button onClick={() => handleNumberClick('9')}>9</button>
+          <button onClick={() => handleNumberClick('*')}>*</button>
+          <button onClick={() => handleNumberClick('0')}>0</button>
+          <button onClick={() => handleNumberClick('#')}>#</button>
           <button onClick={handleClear}>Clear</button>
         </div>
       </div>
       <form onSubmit={handleSubmit}>
-        <button type="submit">전화 걸기</button>
+        <button type='submit'>전화 걸기</button>
       </form>
       <div
         style={{
-          display: "flex",
-          justifyContent: "between",
-          alignItems: "center",
-          width: "100%",
-          height: "300px",
-          border: "1px solid black",
-          borderRadius: "10px",
-          margin: "10px",
-          fontSize: "0.8em",
+          display: 'flex',
+          justifyContent: 'between',
+          alignItems: 'center',
+          width: '100%',
+          height: '300px',
+          border: '1px solid black',
+          borderRadius: '10px',
+          margin: '10px',
+          fontSize: '0.8em',
         }}
       >
-        {" "}
+        {' '}
         <div
           style={{
-            display: "flex",
-            justifyContent: "center",
-            alignItems: "center",
-            width: "50%",
-            flexDirection: "column",
-            height: "100%",
-            fontSize: "1.0em",
+            display: 'flex',
+            justifyContent: 'center',
+            alignItems: 'center',
+            width: '50%',
+            flexDirection: 'column',
+            height: '100%',
+            fontSize: '1.0em',
           }}
         >
           <h3>오윤창,정해일</h3>
           {isMatchingCallData1(newcalldata) && (
             <div
               style={{
-                display: "flex",
-                justifyContent: "center",
-                alignItems: "center",
-                width: "50%",
-                flexDirection: "column",
-                height: "100%",
-                fontSize: "0.8em",
+                display: 'flex',
+                justifyContent: 'center',
+                alignItems: 'center',
+                width: '50%',
+                flexDirection: 'column',
+                height: '100%',
+                fontSize: '0.8em',
               }}
             >
               <div>{newcalldata.channel}</div>
@@ -238,26 +286,26 @@ function CallForm() {
         </div>
         <div
           style={{
-            display: "flex",
-            justifyContent: "center",
-            alignItems: "center",
-            width: "50%",
-            flexDirection: "column",
-            height: "100%",
-            fontSize: "1.0em",
+            display: 'flex',
+            justifyContent: 'center',
+            alignItems: 'center',
+            width: '50%',
+            flexDirection: 'column',
+            height: '100%',
+            fontSize: '1.0em',
           }}
         >
           <h3>이동현</h3>
           {isMatchingCallData2(newcalldata) && (
             <div
               style={{
-                display: "flex",
-                justifyContent: "center",
-                alignItems: "center",
-                width: "50%",
-                flexDirection: "column",
-                height: "100%",
-                fontSize: "1.0em",
+                display: 'flex',
+                justifyContent: 'center',
+                alignItems: 'center',
+                width: '50%',
+                flexDirection: 'column',
+                height: '100%',
+                fontSize: '1.0em',
               }}
             >
               <div>{newcalldata.channel}</div>
@@ -273,14 +321,14 @@ function CallForm() {
       </div>
       <div
         style={{
-          width: "100%",
-          height: "400px",
-          justifyContent: "center",
-          display: "flex",
-          alignItemsL: "center",
+          width: '100%',
+          height: '400px',
+          justifyContent: 'center',
+          display: 'flex',
+          alignItemsL: 'center',
         }}
       >
-        <div className="cdr-table">
+        <div className='cdr-table'>
           <h2>통화 기록 (CDR)</h2>
           {currentRecording && (
             <div>
@@ -310,11 +358,11 @@ function CallForm() {
                   <td>
                     {cdr.recordingfile ? (
                       <audio controls>
-                        <source src={cdr.recordingUrl} type="audio/wav" />
+                        <source src={cdr.recordingUrl} type='audio/wav' />
                         Your browser does not support the audio element.
                       </audio>
                     ) : (
-                      "No recording available"
+                      'No recording available'
                     )}
                   </td>
                 </tr>
